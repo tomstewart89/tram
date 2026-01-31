@@ -57,6 +57,15 @@ if __name__ == "__main__":
         - J_0
     )
 
+    # rotate from y-up to z-up (-90 degrees around x-axis)
+    R_y2z = torch.tensor(
+        [[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=torch.float32, device=device
+    )
+    rotation_world = (R_y2z @ rotation_world.squeeze(1)).unsqueeze(1)
+    translation_world = (R_y2z @ (translation_world + J_0).unsqueeze(-1)).squeeze(
+        -1
+    ) - J_0
+
     # convert rotation matrices to axis-angle
     global_orient_aa = matrix_to_axis_angle(rotation_world.squeeze(1))  # [N, 3]
     body_pose_aa = matrix_to_axis_angle(body_pose)  # [N, 23, 3]
@@ -71,10 +80,20 @@ if __name__ == "__main__":
     )
 
     vertices_world_ = out_.vertices
+    joints_world_ = out_.joints
 
-    err = (vertices_world - vertices_world_).abs()
+    # rotate reference vertices to z-up for comparison
+    vertices_world_zup = (R_y2z @ vertices_world.permute(0, 2, 1)).permute(0, 2, 1)
+    err = (vertices_world_zup - vertices_world_).abs()
     print(f"max error: {err.max().item():.6e}, mean error: {err.mean().item():.6e}")
-    assert torch.allclose(vertices_world, vertices_world_, atol=1e-3)
+    assert torch.allclose(vertices_world_zup, vertices_world_, atol=1e-3)
+
+    # center x/y at zero and place lowest vertex at z=0
+    offset = torch.zeros(3, device=device)
+    offset[0] = joints_world_[:, :, 0].mean()
+    offset[1] = joints_world_[:, :, 1].mean()
+    offset[2] = joints_world_[:, :, 2].min()
+    translation_world -= offset
 
     np.save(
         "results/output/smplx_params.npy",
